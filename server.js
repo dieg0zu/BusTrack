@@ -1,44 +1,50 @@
-const http = require("http");
-const WebSocket = require("ws");
+// server.js
+const express = require('express');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
 
-const server = http.createServer();
-const wss = new WebSocket.Server({ server });
+const app = express();
+app.use(cors());
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
 
-const ubicaciones = {}; // Almacena las ubicaciones de los usuarios
+const locations = new Map();
 
-wss.on("connection", (ws) => {
-    ws.on("message", (message) => {
-        const data = JSON.parse(message);
+io.on('connection', (socket) => {
+    console.log('Usuario conectado:', socket.id);
 
-        if (data.type === "update") {
-            // Actualiza la ubicación del usuario
-            ubicaciones[data.userId] = { lat: data.lat, lng: data.lng };
+    socket.on('register', (userId) => {
+        console.log('Usuario registrado:', userId);
+        socket.userId = userId;
+        socket.emit('registered', userId);
+    });
 
-            // Envía la lista de ubicaciones a todos los clientes conectados
-            const actualizacion = JSON.stringify({
-                type: "locations",
-                locations: ubicaciones,
+    socket.on('updateLocation', (data) => {
+        if (socket.userId) {
+            locations.set(socket.userId, {
+                lat: data.lat,
+                lng: data.lng,
+                timestamp: Date.now()
             });
-
-            wss.clients.forEach((client) => {
-                if (client.readyState === WebSocket.OPEN) {
-                    client.send(actualizacion);
-                }
-            });
+            io.emit('locations', Object.fromEntries(locations));
         }
     });
 
-    // Limpia la ubicación cuando un cliente se desconecta
-    ws.on("close", () => {
-        for (const userId in ubicaciones) {
-            if (ubicaciones[userId].ws === ws) {
-                delete ubicaciones[userId];
-                break;
-            }
+    socket.on('disconnect', () => {
+        if (socket.userId) {
+            locations.delete(socket.userId);
+            io.emit('locations', Object.fromEntries(locations));
         }
     });
 });
 
-server.listen(8080, () => {
-    console.log("Servidor WebSocket escuchando en http://localhost:8080");
+const PORT = process.env.PORT || 3000;
+httpServer.listen(PORT, () => {
+    console.log(`Servidor corriendo en puerto ${PORT}`);
 });

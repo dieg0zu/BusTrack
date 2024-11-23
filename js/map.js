@@ -1,72 +1,145 @@
-const userId = `user_${Math.floor(Math.random() * 1000)}`; // ID único para cada usuario
-const socket = new WebSocket("ws://localhost:8080");
+class LocationTracker {
+    constructor() {
+        this.userId = `user_${Math.floor(Math.random() * 1000000)}`;
+        this.socket = null;
+        this.map = null;
+        this.userMarker = null;
+        this.otherMarkers = new Map();
+        
+        this.initializeMap();
+        this.connectSocket();
+    }
 
-let mapa, marcadorUsuario;
-const marcadoresOtrosUsuarios = {};
+    initializeMap() {
+        this.map = L.map("map").setView([0, 0], 2);
+        
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: "&copy; OpenStreetMap contributors"
+        }).addTo(this.map);
 
-// Inicializa el mapa
-function inicializarMapa() {
-    mapa = L.map("map").setView([0, 0], 2);
+        const statusDiv = document.createElement('div');
+        statusDiv.id = 'connection-status';
+        statusDiv.className = 'status-indicator';
+        document.body.appendChild(statusDiv);
+    }
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OpenStreetMap contributors",
-    }).addTo(mapa);
+    connectSocket() {
+        // Cambiar esta URL cuando despliegues tu servidor
+        const serverUrl = 'https://tu-servidor.onrender.com';
+        this.socket = io(serverUrl);
 
-    // Escucha actualizaciones del servidor
-    socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+        this.socket.on('connect', () => {
+            console.log('Conectado al servidor');
+            this.updateStatus('Conectado', 'connected');
+            this.socket.emit('register', this.userId);
+            this.startLocationTracking();
+        });
 
-        if (data.type === "locations") {
-            actualizarMarcadores(data.locations);
+        this.socket.on('disconnect', () => {
+            console.log('Desconectado del servidor');
+            this.updateStatus('Desconectado', 'disconnected');
+        });
+
+        this.socket.on('registered', (userId) => {
+            console.log('Registrado con ID:', userId);
+        });
+
+        this.socket.on('locations', (locations) => {
+            this.updateMarkers(locations);
+        });
+
+        this.socket.on('connect_error', (error) => {
+            console.error('Error de conexión:', error);
+            this.updateStatus('Error de conexión', 'error');
+        });
+    }
+
+    startLocationTracking() {
+        navigator.geolocation.watchPosition(
+            (position) => {
+                const { latitude: lat, longitude: lng } = position.coords;
+                
+                this.socket.emit('updateLocation', { lat, lng });
+                this.updateUserMarker(lat, lng);
+            },
+            (error) => {
+                console.error("Error obteniendo ubicación:", error);
+                this.updateStatus('Error de GPS', 'error');
+            },
+            { 
+                enableHighAccuracy: true, 
+                timeout: 5000, 
+                maximumAge: 0 
+            }
+        );
+    }
+
+    updateUserMarker(lat, lng) {
+        if (!this.userMarker) {
+            this.userMarker = L.marker([lat, lng], {
+                icon: this.createCustomIcon('blue')
+            }).addTo(this.map)
+              .bindPopup("Mi ubicación");
+            this.map.setView([lat, lng], 15);
+        } else {
+            this.userMarker.setLatLng([lat, lng]);
         }
-    };
+    }
 
-    // Obtiene la ubicación inicial del usuario
-    navigator.geolocation.watchPosition(
-        (position) => {
-            const lat = position.coords.latitude;
-            const lng = position.coords.longitude;
+    updateMarkers(locations) {
+        const currentMarkers = new Set();
 
-            // Envía la ubicación al servidor
-            socket.send(JSON.stringify({ type: "update", userId, lat, lng }));
+        for (const [id, location] of Object.entries(locations)) {
+            if (id === this.userId) continue;
+            
+            currentMarkers.add(id);
+            const { lat, lng } = location;
 
-            // Actualiza el marcador del usuario en el mapa
-            if (!marcadorUsuario) {
-                marcadorUsuario = L.marker([lat, lng])
-                    .addTo(mapa)
-                    .bindPopup("Mi ubicación");
+            if (!this.otherMarkers.has(id)) {
+                const marker = L.marker([lat, lng], {
+                    icon: this.createCustomIcon('red')
+                }).addTo(this.map)
+                  .bindPopup(`Usuario: ${id}`);
+                this.otherMarkers.set(id, marker);
             } else {
-                marcadorUsuario.setLatLng([lat, lng]);
+                this.otherMarkers.get(id).setLatLng([lat, lng]);
             }
+        }
 
-            // Centra el mapa en la ubicación del usuario
-            mapa.setView([lat, lng], 15);
-        },
-        (error) => {
-            console.error("Error al obtener la ubicación: ", error);
-        },
-        { enableHighAccuracy: true }
-    );
-}
-
-// Actualiza los marcadores de otros usuarios en el mapa
-function actualizarMarcadores(locations) {
-    for (const id in locations) {
-        if (id !== userId) {
-            const { lat, lng } = locations[id];
-
-            if (!marcadoresOtrosUsuarios[id]) {
-                // Crea un nuevo marcador para un usuario desconocido
-                marcadoresOtrosUsuarios[id] = L.marker([lat, lng])
-                    .addTo(mapa)
-                    .bindPopup(`Usuario: ${id}`);
-            } else {
-                // Actualiza la posición del marcador existente
-                marcadoresOtrosUsuarios[id].setLatLng([lat, lng]);
+        // Eliminar marcadores de usuarios que ya no están
+        for (const [id, marker] of this.otherMarkers) {
+            if (!currentMarkers.has(id)) {
+                this.map.removeLayer(marker);
+                this.otherMarkers.delete(id);
             }
+        }
+    }
+
+    createCustomIcon(color) {
+        return L.divIcon({
+            className: 'custom-marker',
+            html: `<div style="
+                background-color: ${color};
+                width: 15px;
+                height: 15px;
+                border-radius: 50%;
+                border: 2px solid white;
+                box-shadow: 0 0 5px rgba(0,0,0,0.5);
+            "></div>`,
+            iconSize: [15, 15],
+            iconAnchor: [7, 7]
+        });
+    }
+
+    updateStatus(message, className) {
+        const statusDiv = document.getElementById('connection-status');
+        if (statusDiv) {
+            statusDiv.textContent = message;
+            statusDiv.className = `status-indicator ${className}`;
         }
     }
 }
 
-// Inicializa el mapa al cargar la página
-inicializarMapa();
+document.addEventListener('DOMContentLoaded', () => {
+    const tracker = new LocationTracker();
+});
