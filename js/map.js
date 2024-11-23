@@ -25,7 +25,7 @@ class LocationTracker {
 
     connectSocket() {
         // Cambiar esta URL cuando despliegues tu servidor
-        const serverUrl = 'https://tu-servidor.onrender.com';
+        const serverUrl = 'https://bustrack-production.up.railway.app';
         this.socket = io(serverUrl);
 
         this.socket.on('connect', () => {
