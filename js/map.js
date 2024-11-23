@@ -26,6 +26,8 @@ class LocationTracker {
     connectSocket() {
         // Cambiar esta URL cuando despliegues tu servidor
         const serverUrl = 'https://bustrack-production.up.railway.app';
+        console.log('Conectando a:', serverUrl);
+
         this.socket = io(serverUrl);
 
         this.socket.on('connect', () => {
@@ -45,6 +47,7 @@ class LocationTracker {
         });
 
         this.socket.on('locations', (locations) => {
+            console.log('Recibidas ubicaciones:', locations);
             this.updateMarkers(locations);
         });
 
