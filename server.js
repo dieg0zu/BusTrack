@@ -6,6 +6,20 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors());
+
+// Añadir ruta para verificar que el servidor está funcionando
+app.get('/', (req, res) => {
+    res.send('Servidor de localización en tiempo real funcionando correctamente');
+});
+
+app.get('/status', (req, res) => {
+    res.json({
+        status: 'online',
+        connections: io.engine.clientsCount,
+        uptime: process.uptime()
+    });
+});
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
@@ -38,6 +52,7 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         if (socket.userId) {
+            console.log('Usuario desconectado:', socket.userId);
             locations.delete(socket.userId);
             io.emit('locations', Object.fromEntries(locations));
         }
